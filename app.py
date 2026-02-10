@@ -1,11 +1,58 @@
-
 # === Imports ===
 import os
 import math
 import datetime
+
 from dotenv import load_dotenv
+
+# === DRY RUN MODE ===
+DRY_RUN = False  # Set to True to disable API calls and simulate behavior
+
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_core.documents import Document
+def load_document(vector_store, file_path: str):
+    """
+    Loads a text file, creates a LangChain Document, and adds it to the vector store.
+    Args:
+        vector_store (InMemoryVectorStore): The vector store instance.
+        file_path (str): Path to the text file to load.
+    Returns:
+        str: The document ID if added successfully, else None.
+    """
+    import os
+    from datetime import datetime
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        metadata = {
+            "fileName": os.path.basename(file_path),
+            "createdAt": datetime.now().isoformat(),
+        }
+        token_count = count_tokens(text)
+        print(f"File '{metadata['fileName']}' has {token_count} tokens and {len(text)} chars.")
+        if DRY_RUN:
+            print(f"[DRY RUN] Would add '{metadata['fileName']}' to vector store. No API call made.")
+            return None
+        document = Document(page_content=text, metadata=metadata)
+        doc_ids = vector_store.add_documents([document])
+        print(f"✅ Loaded '{metadata['fileName']}' ({len(text)} chars) into vector store.")
+        return doc_ids[0] if doc_ids else None
+    except FileNotFoundError:
+        print(f"❌ File not found: {file_path}")
+        return None
+    except Exception as e:
+        error_msg = str(e)
+        if (
+            "maximum context length" in error_msg.lower()
+            or "token" in error_msg.lower()
+        ):
+            print("⚠️ This document is too large to embed as a single chunk.")
+            print("Token limit exceeded. The embedding model can only process up to 8,191 tokens at once.")
+            print("Solution: The document needs to be split into smaller chunks.")
+        else:
+            print(f"❌ Error loading document '{file_path}': {error_msg}")
+        return None
 
 # === Constants ===
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
@@ -67,6 +114,23 @@ def search_sentences(vector_store, query: str, k: int = 3):
         print(f"{rank}. [Score: {score:.4f}] {doc.page_content} {match_note}")
     return [(doc, score) for doc, score, _ in hybrid_results]
 
+# === Token Counting ===
+def count_tokens(text: str, model: str = EMBEDDING_MODEL) -> int:
+    """
+    Count the number of tokens in a string for a given model.
+    Returns 0 if tiktoken is not installed.
+    """
+    try:
+        import tiktoken
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except ImportError:
+        print("⚠️  tiktoken not installed. Token count will be 0.")
+        return 0
+    except Exception as e:
+        print(f"⚠️  Error counting tokens: {e}")
+        return 0
+
 def main():
     """
     Main entry point for the script. Loads environment, checks config, stores and searches embeddings.
@@ -94,73 +158,20 @@ def main():
     vector_store = InMemoryVectorStore(embeddings)
     print("✅ InMemoryVectorStore instance created.")
 
-    print("\n=== Embedding Inspector Lab ===")
-    print("Storing three test sentences in the vector store...\n")
+    print("\n=== Loading Documents into Vector Database ===")
+    doc_path1 = "HealthInsuranceBrochure.md"
+    doc_id1 = load_document(vector_store, doc_path1)
+    if doc_id1:
+        print(f"Document '{doc_path1}' loaded successfully with ID: {doc_id1}")
+    else:
+        print(f"Failed to load document: {doc_path1}")
 
-    sentences = [
-        # Animals and pets
-        "The dog barked loudly in the yard.",
-        "Cats love to nap in sunny spots.",
-        "Birds chirp early in the morning.",
-        "Dogs are common pets and can make a lot of noise.",
-        "A puppy wagged its tail happily.",
-        # Science and physics
-        "Electrons spin around the nucleus in atoms.",
-        "Gravity keeps planets in orbit around the sun.",
-        "The scientist observed the chemical reaction.",
-        # Food and cooking
-        "Fresh bread smells wonderful when it is baking.",
-        "Tomatoes are used in many Italian recipes.",
-        "Cooking pasta requires boiling water.",
-        # Sports and activities
-        "Soccer players run across the field to score goals.",
-        "Swimming is a great way to exercise.",
-        "The tennis match lasted for hours.",
-        # Weather and nature
-        "Rain fell gently on the green leaves.",
-        "Thunderstorms can be loud and frightening.",
-        # Technology and programming
-        "Python is a popular programming language for data science.",
-        "The computer crashed during the software update.",
-        "Artificial intelligence is changing the world."
-    ]
-
-    now = datetime.datetime.now().isoformat()
-    categories = [
-        "animals", "animals", "animals", "animals", "animals",
-        "science", "science", "science",
-        "food", "food", "food",
-        "sports", "sports", "sports",
-        "nature", "nature",
-        "technology", "technology", "technology"
-    ]
-    metadatas = [
-        {"created_at": now, "index": idx, "category": categories[idx]}
-        for idx in range(len(sentences))
-    ]
-
-    vector_store.add_texts(sentences, metadatas=metadatas)
-
-    print(f"✅ Stored {len(sentences)} sentences in the vector store.")
-    print("Sentences added:")
-    for sentence in sentences:
-        print(f"- {sentence}")
-
-    print("\n=== Semantic Search ===")
-    while True:
-        user_query = input("Enter a search query (or 'quit' to exit): ").strip()
-        if user_query.lower() in {"quit", "exit"}:
-            print("Goodbye! 👋")
-            break
-        if not user_query:
-            continue
-        user_category = input("Enter a category to filter (or leave blank for all): ").strip().lower()
-        if not user_category:
-            search_sentences.category = None
-        else:
-            search_sentences.category = user_category
-        search_sentences(vector_store, user_query)
-        print()
+    doc_path2 = "EmployeeHandbook.md"
+    doc_id2 = load_document(vector_store, doc_path2)
+    if doc_id2:
+        print(f"Document '{doc_path2}' loaded successfully with ID: {doc_id2}")
+    else:
+        print(f"Failed to load document: {doc_path2}")
 
 if __name__ == "__main__":
     main()
